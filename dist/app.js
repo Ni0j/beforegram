@@ -11,7 +11,8 @@ const icons = {
   save: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14v18l-7-4-7 4z"/></svg>',
   back: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>',
   more: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="19" cy="12" r="1" fill="currentColor"/></svg>',
-  grid: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18"/><path d="M3 10h18M10 3v18"/></svg>'
+  grid: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18"/><path d="M3 10h18M10 3v18"/></svg>',
+  layers: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/></svg>'
 };
 
 const defaultAccount = () => ({
@@ -29,7 +30,12 @@ let view = "landing";
 let route = "home";
 let activePostId = null;
 let dashboardOpen = false;
-let createImage = "";
+let dashboardPostImage = "";
+let viewerFollowing = false;
+let circleImage = "";
+let circleTiles = [];
+let circleResult = null;
+let circleBusy = false;
 
 function loadAccount() {
   try {
@@ -127,7 +133,8 @@ function simulatorTemplate() {
 
 function routeTemplate() {
   if (route === "search") return searchTemplate();
-  if (route === "create") return createTemplate();
+  if (route === "circle") return circleTemplate();
+  if (route === "story") return storyTemplate();
   if (route === "profile") return profileTemplate();
   if (route === "post") return postDetailTemplate();
   if (route === "comments") return commentsTemplate();
@@ -135,12 +142,12 @@ function routeTemplate() {
 }
 
 function navTemplate() {
-  const current = ["post", "comments"].includes(route) ? "profile" : route;
+  const current = ["post", "comments"].includes(route) ? "profile" : route === "story" ? "home" : route;
   return `<nav class="nav" aria-label="Instagram preview navigation">
     ${navButton("home", "Home", icons.home, current)}
     ${navButton("search", "Search", icons.search, current)}
-    ${navButton("create", "Create", icons.create, current)}
-    ${navButton("profile", "Profile", account.avatar ? avatar() : icons.profile, current)}
+    ${navButton("circle", "Circle fit", icons.layers, current)}
+    ${navButton("profile", `${account.username} profile`, icons.profile, current)}
   </nav>`;
 }
 
@@ -150,12 +157,20 @@ function navButton(name, label, icon, current) {
 
 function homeTemplate() {
   return `<header class="screen-header home-header"><span class="wordmark">Instagram</span><div class="header-actions">${icons.heart}${icons.send}</div></header>
-    <div class="stories"><button class="story" data-route="profile"><span class="story-ring">${avatar()}</span><span>Your story</span></button></div>
+    <div class="stories"><button class="story" data-route="story"><span class="story-ring">${avatar()}</span><span>${esc(account.username)}</span></button></div>
     ${account.posts.length ? [...account.posts].reverse().map(postCard).join("") : emptyFeedTemplate()}`;
 }
 
 function emptyFeedTemplate() {
-  return `<div class="empty-feed"><div><div class="empty-icon">${icons.create}</div><h2>Your future feed starts here</h2><p>Create a post, then browse it as your audience would.</p><button class="primary" data-route="create">Create first post</button></div></div>`;
+  return `<div class="empty-feed"><div><div class="empty-icon">${icons.profile}</div><h2>No posts from ${esc(account.username)} yet</h2><p>When this account shares a post, an audience member will see it here.</p></div></div>`;
+}
+
+function storyTemplate() {
+  const latestPost = account.posts[account.posts.length - 1];
+  return `<section class="story-view"><header class="story-header"><button class="icon-button" data-route="home" aria-label="Close story">${icons.back}</button>${avatar()}<strong>${esc(account.username)}</strong><span>now</span></header>
+    ${latestPost ? `<img class="story-content" src="${latestPost.image}" alt="Story from ${esc(account.username)}">` : `<div class="story-empty">${avatar("large")}<strong>${esc(account.displayName)}</strong><span>@${esc(account.username)}</span></div>`}
+    <div class="story-reply"><span>Send message</span>${icons.heart}${icons.send}</div>
+  </section>`;
 }
 
 function postCard(post) {
@@ -183,20 +198,47 @@ function profileTemplate() {
   return `<header class="screen-header"><strong>${esc(account.username)}</strong><span class="header-right">${icons.more}</span></header>
     <section class="profile-head"><div class="profile-top">${avatar("large")}<div class="stats"><span><strong>${account.posts.length}</strong>posts</span><span><strong>0</strong>followers</span><span><strong>0</strong>following</span></div></div>
       <div class="profile-bio"><strong>${esc(account.displayName)}</strong><span>${esc(account.category)}</span><span>${esc(account.bio).replace(/\n/g, "<br>")}</span>${link ? `<a href="${esc(link)}" target="_blank" rel="noopener">${esc(account.link)}</a>` : ""}</div>
-      <div class="profile-buttons"><button class="small-button" data-action="toggle-dashboard">Edit profile</button><button class="small-button" data-route="create">Add post</button></div>
+      <div class="profile-buttons"><button class="small-button ${viewerFollowing ? "following" : "follow"}" data-action="toggle-follow">${viewerFollowing ? "Following" : "Follow"}</button><button class="small-button" data-action="message">Message</button></div>
     </section>
     <div class="profile-tabs"><button aria-label="Posts">${icons.grid}</button><button aria-label="Mentions">${icons.profile}</button></div>
     ${account.posts.length ? `<div class="profile-grid">${[...account.posts].reverse().map(p => `<button class="grid-post" data-post="${p.id}"><img src="${p.image}" alt="Open post"></button>`).join("")}</div>` : `<div class="empty-grid"><div><h3>No posts yet</h3><p>Create a post to see your future profile come alive.</p></div></div>`}`;
 }
 
-function createTemplate() {
-  return `<header class="screen-header"><strong>New post</strong></header><form id="create-form" class="create-view">
-    <h2>Create a post</h2><p>It will appear everywhere this account is shown.</p>
-    <label class="upload-box" for="create-file">${createImage ? `<img class="upload-preview" src="${createImage}" alt="Selected post preview">` : `<span>${icons.create}<br><br>Choose a photo</span>`}</label>
-    <input class="hidden" id="create-file" type="file" accept="image/*" ${createImage ? "" : "required"}>
-    <div class="field"><label for="create-caption">Caption</label><textarea id="create-caption" placeholder="Write a caption…"></textarea></div>
-    <button class="primary setup-submit" type="submit">Share to preview</button>
-  </form>`;
+function circleTemplate() {
+  if (circleBusy) return `<header class="screen-header"><strong>Circle fit</strong></header><div class="circle-loading"><span class="spinner"></span><strong>Reading your screenshot…</strong><p>Everything stays in this browser.</p></div>`;
+  return `<header class="screen-header"><strong>Circle fit</strong></header><section class="circle-view">
+    <div class="circle-intro"><h2>See yourself in the mix</h2><p>Upload a screenshot of Explore or a profile grid. We’ll rebuild the visual context and place your posts inside it—no Instagram login needed.</p></div>
+    ${circleImage ? circleResultTemplate() : circleUploadTemplate()}
+  </section>`;
+}
+
+function circleUploadTemplate() {
+  return `<label class="circle-upload" for="circle-file">${icons.layers}<strong>Upload a grid screenshot</strong><span>Choose a screenshot centered on the posts</span></label>
+    <input class="hidden" id="circle-file" type="file" accept="image/*">
+    <p class="privacy-note">Processed locally. Your screenshot never leaves this device.</p>`;
+}
+
+function circleResultTemplate() {
+  const ownPosts = [...account.posts].reverse().slice(0, 2);
+  const insertAt = [2, 7];
+  const mixedTiles = circleTiles.map((tile, index) => {
+    const ownIndex = insertAt.indexOf(index);
+    const post = ownPosts[ownIndex];
+    return post
+      ? `<button class="circle-tile own-tile" data-post="${post.id}"><img src="${post.image}" alt="Your post in the imported grid"><span>Your post</span></button>`
+      : `<div class="circle-tile"><img src="${tile}" alt="Imported reference tile"></div>`;
+  }).join("");
+  return `${account.posts.length ? scoreTemplate() : `<div class="circle-callout"><strong>Add a post to test the fit</strong><p>Your reference grid is ready. Add content from the editor outside the phone, then return here.</p><button class="primary" data-action="toggle-dashboard">Open editor</button></div>`}
+    <div class="circle-grid" aria-label="Your posts mixed into the imported grid">${mixedTiles}</div>
+    <div class="circle-actions"><label class="small-button" for="circle-file">Try another screenshot</label><button class="small-button" data-action="clear-circle">Remove</button></div>
+    <input class="hidden" id="circle-file" type="file" accept="image/*">
+    <p class="privacy-note">This score compares visual palette, brightness, and saturation—not likely engagement or audience interest.</p>`;
+}
+
+function scoreTemplate() {
+  const label = circleResult.score >= 85 ? "Feels native" : circleResult.score >= 70 ? "Related, with contrast" : "Distinct from this circle";
+  return `<div class="fit-score"><div class="score-ring"><strong>${circleResult.score}</strong><span>/100</span></div><div><h3>${label}</h3><p>Visual fit with this screenshot</p></div></div>
+    <div class="fit-metrics"><span><strong>${circleResult.palette}</strong>Palette</span><span><strong>${circleResult.brightness}</strong>Brightness</span><span><strong>${circleResult.saturation}</strong>Saturation</span></div>`;
 }
 
 function activePost() { return account.posts.find(p => String(p.id) === String(activePostId)); }
@@ -229,7 +271,14 @@ function dashboardTemplate() {
     ${dashboardField("Category", "category", account.category)}
     ${dashboardField("Link", "link", account.link)}
     <div class="field"><label for="dash-bio">Bio</label><textarea id="dash-bio" data-account="bio">${esc(account.bio)}</textarea></div>
-    <button class="primary setup-submit" data-action="close-dashboard">Done</button>
+    <div class="dashboard-divider"></div>
+    <form id="dashboard-post-form"><h3>Add a post</h3>
+      <label class="dashboard-post-upload" for="dashboard-post-file">${dashboardPostImage ? `<img src="${dashboardPostImage}" alt="Selected post preview">` : `<span>${icons.create} Choose a photo</span>`}</label>
+      <input class="hidden" id="dashboard-post-file" type="file" accept="image/*">
+      <div class="field"><label for="dashboard-post-caption">Caption</label><textarea id="dashboard-post-caption" placeholder="Write a caption…"></textarea></div>
+      <button class="primary setup-submit" type="submit">Add to simulated account</button>
+    </form>
+    <button class="secondary setup-submit" data-action="close-dashboard">Done editing</button>
     <p class="dashboard-note">Changes are saved on this device and update every view in the simulator.</p>
   </aside>`;
 }
@@ -245,9 +294,10 @@ function bindEvents() {
   document.querySelectorAll("[data-comments]").forEach(el => el.addEventListener("click", () => { activePostId = el.dataset.comments; go("comments"); }));
 
   document.querySelector("#setup-form")?.addEventListener("submit", submitSetup);
-  document.querySelector("#create-form")?.addEventListener("submit", submitPost);
   document.querySelector("#comment-form")?.addEventListener("submit", submitComment);
-  document.querySelector("#create-file")?.addEventListener("change", async event => { createImage = await fileToDataUrl(event.target.files[0]); render(); });
+  document.querySelector("#dashboard-post-form")?.addEventListener("submit", submitDashboardPost);
+  document.querySelector("#dashboard-post-file")?.addEventListener("change", async event => { dashboardPostImage = await fileToDataUrl(event.target.files[0]); render(); });
+  document.querySelector("#circle-file")?.addEventListener("change", importCircleScreenshot);
   document.querySelector("#dashboard-avatar")?.addEventListener("change", async event => { account.avatar = await fileToDataUrl(event.target.files[0]); saveAccount(); render(); });
   document.querySelector("#search-input")?.addEventListener("input", event => { document.querySelector("#search-results").innerHTML = searchResultTemplate(event.target.value); document.querySelector("#search-results [data-route]")?.addEventListener("click", () => go("profile")); });
   document.querySelectorAll("[data-account]").forEach(input => input.addEventListener("input", event => { account[event.target.dataset.account] = event.target.value; saveAccount(); renderScreenOnly(); }));
@@ -261,11 +311,13 @@ function handleAction(event) {
   if (action === "toggle-dashboard") { dashboardOpen = !dashboardOpen; render(); }
   if (action === "close-dashboard") { dashboardOpen = false; render(); }
   if (action === "post-menu") editPost();
+  if (action === "toggle-follow") { viewerFollowing = !viewerFollowing; render(); }
+  if (action === "message") toast(`Message preview for @${account.username}`);
+  if (action === "clear-circle") { circleImage = ""; circleTiles = []; circleResult = null; render(); }
 }
 
 function go(nextRoute) {
   route = nextRoute;
-  createImage = nextRoute === "create" ? createImage : "";
   render();
 }
 
@@ -298,16 +350,18 @@ async function submitSetup(event) {
   render();
 }
 
-async function submitPost(event) {
+async function submitDashboardPost(event) {
   event.preventDefault();
-  if (!createImage) return toast("Choose a photo first.");
-  const caption = document.querySelector("#create-caption").value.trim();
-  const post = { id: crypto.randomUUID(), image: createImage, caption, comments: [] };
+  if (!dashboardPostImage) return toast("Choose a photo first.");
+  const caption = document.querySelector("#dashboard-post-caption").value.trim();
+  const post = { id: crypto.randomUUID(), image: dashboardPostImage, caption, comments: [] };
   account.posts.push(post);
   activePostId = post.id;
-  createImage = "";
+  dashboardPostImage = "";
   saveAccount();
-  route = "post";
+  if (circleTiles.length) circleResult = await calculateFit(circleTiles, account.posts.slice(-3));
+  dashboardOpen = false;
+  route = "profile";
   render();
   toast("Post added to your preview");
 }
@@ -344,6 +398,93 @@ function deletePost(post) {
 }
 
 function cleanUsername(value = "") { return value.trim().replace(/^@/, "").replace(/\s+/g, "").toLowerCase(); }
+
+async function importCircleScreenshot(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  circleBusy = true;
+  render();
+  try {
+    circleImage = await fileToDataUrl(file);
+    circleTiles = await cropGrid(circleImage);
+    circleResult = account.posts.length ? await calculateFit(circleTiles, account.posts.slice(-3)) : null;
+  } catch {
+    circleImage = "";
+    circleTiles = [];
+    circleResult = null;
+    toast("We couldn’t read that screenshot. Try a JPG or PNG.");
+  }
+  circleBusy = false;
+  render();
+}
+
+async function cropGrid(source) {
+  const image = await loadImage(source);
+  const side = Math.min(image.width, image.height);
+  const startX = Math.max(0, (image.width - side) / 2);
+  const startY = Math.max(0, (image.height - side) / 2);
+  const tileSize = side / 3;
+  return Array.from({ length: 9 }, (_, index) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 240;
+    canvas.height = 240;
+    const column = index % 3;
+    const row = Math.floor(index / 3);
+    canvas.getContext("2d").drawImage(image, startX + column * tileSize, startY + row * tileSize, tileSize, tileSize, 0, 0, 240, 240);
+    return canvas.toDataURL("image/jpeg", .82);
+  });
+}
+
+async function calculateFit(referenceTiles, posts) {
+  const reference = averageFeatureSet(await Promise.all(referenceTiles.map(imageFeatures)));
+  const own = averageFeatureSet(await Promise.all(posts.map(post => imageFeatures(post.image))));
+  const paletteDistance = Math.hypot(reference.r - own.r, reference.g - own.g, reference.b - own.b) / 441.7;
+  const brightnessDistance = Math.abs(reference.brightness - own.brightness) / 255;
+  const saturationDistance = Math.abs(reference.saturation - own.saturation) / 255;
+  const metric = distance => Math.max(0, Math.round(100 * (1 - distance)));
+  return {
+    score: Math.max(0, Math.round(100 * (1 - .55 * paletteDistance - .25 * brightnessDistance - .2 * saturationDistance))),
+    palette: metric(paletteDistance),
+    brightness: metric(brightnessDistance),
+    saturation: metric(saturationDistance)
+  };
+}
+
+async function imageFeatures(source) {
+  const image = await loadImage(source);
+  const canvas = document.createElement("canvas");
+  canvas.width = 32;
+  canvas.height = 32;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  context.drawImage(image, 0, 0, 32, 32);
+  const pixels = context.getImageData(0, 0, 32, 32).data;
+  let r = 0, g = 0, b = 0, brightness = 0, saturation = 0, count = 0;
+  for (let index = 0; index < pixels.length; index += 4) {
+    if (pixels[index + 3] < 20) continue;
+    const red = pixels[index], green = pixels[index + 1], blue = pixels[index + 2];
+    r += red; g += green; b += blue;
+    brightness += .299 * red + .587 * green + .114 * blue;
+    saturation += Math.max(red, green, blue) - Math.min(red, green, blue);
+    count++;
+  }
+  return { r: r / count, g: g / count, b: b / count, brightness: brightness / count, saturation: saturation / count };
+}
+
+function averageFeatureSet(features) {
+  return features.reduce((average, feature) => {
+    Object.keys(average).forEach(key => average[key] += feature[key] / features.length);
+    return average;
+  }, { r: 0, g: 0, b: 0, brightness: 0, saturation: 0 });
+}
+
+function loadImage(source) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = reject;
+    image.src = source;
+  });
+}
 
 function fileToDataUrl(file) {
   if (!file) return Promise.resolve("");
