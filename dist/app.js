@@ -1,4 +1,6 @@
 const STORAGE_KEY = "beforegram-account-v1";
+const CONTEXT_KEY = "beforegram-context-v1";
+const THEME_KEY = "beforegram-theme-v1";
 
 const icons = {
   home: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5v10H15v-6H9v6H3z"/></svg>',
@@ -22,16 +24,23 @@ const defaultAccount = () => ({
   bio: "Add a bio to introduce your future account.",
   category: "Digital creator",
   link: "",
-  posts: []
+  followers: 0,
+  following: 0,
+  posts: [],
+  messages: []
 });
 
 let account = loadAccount();
+let comparisonAccounts = loadComparisonAccounts();
+let theme = localStorage.getItem(THEME_KEY) || "light";
 let view = "landing";
 let route = "home";
 let activePostId = null;
+let activeReferenceId = null;
 let dashboardOpen = false;
 let dashboardPostImage = "";
 let viewerFollowing = false;
+let messageSender = "viewer";
 let circleImage = "";
 let circleTiles = [];
 let circleResult = null;
@@ -40,13 +49,24 @@ let circleBusy = false;
 function loadAccount() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    return saved && Array.isArray(saved.posts) ? { ...defaultAccount(), ...saved } : defaultAccount();
+    return saved && Array.isArray(saved.posts) ? { ...defaultAccount(), ...saved, messages: Array.isArray(saved.messages) ? saved.messages : [] } : defaultAccount();
   } catch { return defaultAccount(); }
+}
+
+function loadComparisonAccounts() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(CONTEXT_KEY));
+    return Array.isArray(saved) ? saved : [];
+  } catch { return []; }
 }
 
 function saveAccount() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(account)); }
   catch { toast("That image is too large for this browser. Try a smaller file."); }
+}
+
+function saveComparisonAccounts() {
+  localStorage.setItem(CONTEXT_KEY, JSON.stringify(comparisonAccounts));
 }
 
 function esc(value = "") {
@@ -72,7 +92,13 @@ function avatar(size = "") {
     : `<div class="avatar avatar-fallback ${size}" aria-label="Avatar placeholder">${esc(initials())}</div>`;
 }
 
+function referenceAvatar(reference, size = "") {
+  const letters = reference.username.slice(0, 2).toUpperCase();
+  return `<div class="avatar avatar-fallback reference-avatar ${size}" aria-label="${esc(reference.username)} placeholder avatar">${esc(letters)}</div>`;
+}
+
 function render() {
+  document.documentElement.dataset.theme = theme;
   const app = document.querySelector("#app");
   if (view === "landing") app.innerHTML = landingTemplate();
   if (view === "setup") app.innerHTML = setupTemplate();
@@ -81,7 +107,7 @@ function render() {
 }
 
 function landingTemplate() {
-  return `<section class="landing">
+  return `<section class="landing">${themeButtonTemplate()}
     <div class="landing-card">
       <div class="landing-mark" aria-hidden="true"></div>
       <h1>Build your Instagram before you launch it.</h1>
@@ -94,7 +120,7 @@ function landingTemplate() {
 }
 
 function setupTemplate() {
-  return `<section class="setup"><div class="setup-panel">
+  return `<section class="setup">${themeButtonTemplate()}<div class="setup-panel">
     <header class="setup-head"><button class="icon-button" data-action="landing" aria-label="Back">${icons.back}</button><h1>Prepare your account</h1></header>
     <form id="setup-form">
       <div class="form-grid">
@@ -125,16 +151,23 @@ function simulatorTemplate() {
         ${route === "comments" ? commentFormTemplate() : ""}
         ${navTemplate()}
       </div>
+      ${themeButtonTemplate()}
       <button class="edit-toggle" data-action="toggle-dashboard">Edit preview</button>
     </div>
     ${dashboardOpen ? dashboardTemplate() : ""}
   </section>`;
 }
 
+function themeButtonTemplate() {
+  return `<button class="theme-toggle" data-action="toggle-theme" aria-label="Switch to ${theme === "dark" ? "light" : "dark"} mode">${theme === "dark" ? "☀ Light" : "☾ Dark"}</button>`;
+}
+
 function routeTemplate() {
   if (route === "search") return searchTemplate();
   if (route === "circle") return circleTemplate();
   if (route === "story") return storyTemplate();
+  if (route === "messages") return messagesTemplate();
+  if (route === "reference") return referenceProfileTemplate();
   if (route === "profile") return profileTemplate();
   if (route === "post") return postDetailTemplate();
   if (route === "comments") return commentsTemplate();
@@ -142,7 +175,7 @@ function routeTemplate() {
 }
 
 function navTemplate() {
-  const current = ["post", "comments"].includes(route) ? "profile" : route === "story" ? "home" : route;
+  const current = ["post", "comments", "messages"].includes(route) ? "profile" : route === "story" ? "home" : route === "reference" ? "search" : route;
   return `<nav class="nav" aria-label="Instagram preview navigation">
     ${navButton("home", "Home", icons.home, current)}
     ${navButton("search", "Search", icons.search, current)}
@@ -156,9 +189,33 @@ function navButton(name, label, icon, current) {
 }
 
 function homeTemplate() {
-  return `<header class="screen-header home-header"><span class="wordmark">Instagram</span><div class="header-actions">${icons.heart}${icons.send}</div></header>
-    <div class="stories"><button class="story" data-route="story"><span class="story-ring">${avatar()}</span><span>${esc(account.username)}</span></button></div>
-    ${account.posts.length ? [...account.posts].reverse().map(postCard).join("") : emptyFeedTemplate()}`;
+  const before = comparisonAccounts.slice(0, 1).map(referenceStory).join("");
+  const after = comparisonAccounts.slice(1).map(referenceStory).join("");
+  return `<header class="screen-header home-header"><span class="wordmark">Instagram</span><div class="header-actions"><button aria-label="Activity">${icons.heart}</button><button data-action="message" aria-label="Messages">${icons.send}</button></div></header>
+    <div class="stories">${before}<button class="story" data-route="story"><span class="story-ring">${avatar()}</span><span>${esc(account.username)}</span></button>${after}</div>
+    ${homeFeedTemplate()}`;
+}
+
+function referenceStory(reference) {
+  return `<button class="story" data-reference="${reference.id}"><span class="story-ring">${referenceAvatar(reference)}</span><span>${esc(reference.username)}</span></button>`;
+}
+
+function homeFeedTemplate() {
+  const posts = [...account.posts].reverse();
+  const items = [];
+  const length = Math.max(posts.length, comparisonAccounts.length);
+  for (let index = 0; index < length; index++) {
+    if (comparisonAccounts[index]) items.push(referencePostCard(comparisonAccounts[index]));
+    if (posts[index]) items.push(postCard(posts[index]));
+  }
+  return items.length ? items.join("") : emptyFeedTemplate();
+}
+
+function referencePostCard(reference) {
+  return `<article class="post-card reference-post"><div class="post-author">${referenceAvatar(reference)}<button data-reference="${reference.id}"><strong>${esc(reference.username)}</strong><span>Reference account</span></button></div>
+    <button class="reference-post-placeholder" data-reference="${reference.id}"><span>${esc(reference.username.slice(0, 1).toUpperCase())}</span><small>Post placeholder</small></button>
+    <div class="action-row"><button aria-label="Like">${icons.heart}</button><button aria-label="Comment">${icons.comment}</button><button aria-label="Share">${icons.send}</button><button class="save" aria-label="Save">${icons.save}</button></div>
+    <div class="post-copy"><p><strong>${esc(reference.username)}</strong> Reference content appears here.</p></div></article>`;
 }
 
 function emptyFeedTemplate() {
@@ -169,7 +226,7 @@ function storyTemplate() {
   const latestPost = account.posts[account.posts.length - 1];
   return `<section class="story-view"><header class="story-header"><button class="icon-button" data-route="home" aria-label="Close story">${icons.back}</button>${avatar()}<strong>${esc(account.username)}</strong><span>now</span></header>
     ${latestPost ? `<img class="story-content" src="${latestPost.image}" alt="Story from ${esc(account.username)}">` : `<div class="story-empty">${avatar("large")}<strong>${esc(account.displayName)}</strong><span>@${esc(account.username)}</span></div>`}
-    <div class="story-reply"><span>Send message</span>${icons.heart}${icons.send}</div>
+    <div class="story-reply"><button data-action="message">Send message</button>${icons.heart}${icons.send}</div>
   </section>`;
 }
 
@@ -184,24 +241,47 @@ function postCard(post) {
 
 function searchTemplate() {
   return `<div class="search-wrap"><input class="search-input" id="search-input" placeholder="Search" aria-label="Search accounts"></div>
-    <div class="search-label">Accounts</div><div id="search-results">${searchResultTemplate("")}</div>`;
+    <div class="search-label">${comparisonAccounts.length ? "Recent" : "Accounts"}</div><div id="search-results">${searchResultTemplate("")}</div>`;
 }
 
 function searchResultTemplate(query) {
   const text = query.trim().toLowerCase();
-  const matches = !text || account.username.toLowerCase().includes(text) || account.displayName.toLowerCase().includes(text);
-  return matches ? `<button class="search-result" data-route="profile">${avatar()}<span><strong>${esc(account.username)}</strong><span>${esc(account.displayName)} · ${esc(account.category)}</span></span></button>` : `<div class="empty-feed"><div><h2>No accounts found</h2><p>Try searching for ${esc(account.username)}.</p></div></div>`;
+  const ownMatches = !text || account.username.toLowerCase().includes(text) || account.displayName.toLowerCase().includes(text);
+  const references = comparisonAccounts.filter(reference => !text || reference.username.toLowerCase().includes(text));
+  const own = ownMatches ? `<button class="search-result own-result" data-route="profile">${avatar()}<span><strong>${esc(account.username)}</strong><span>${esc(account.displayName)} · ${esc(account.category)}</span></span><small>Preview</small></button>` : "";
+  const others = references.map(reference => `<button class="search-result" data-reference="${reference.id}">${referenceAvatar(reference)}<span><strong>${esc(reference.username)}</strong><span>Reference account</span></span></button>`).join("");
+  return own || others ? own + others : `<div class="empty-feed"><div><h2>No accounts found</h2><p>Try another username.</p></div></div>`;
 }
 
 function profileTemplate() {
   const link = safeLink(account.link);
   return `<header class="screen-header"><strong>${esc(account.username)}</strong><span class="header-right">${icons.more}</span></header>
-    <section class="profile-head"><div class="profile-top">${avatar("large")}<div class="stats"><span><strong>${account.posts.length}</strong>posts</span><span><strong>0</strong>followers</span><span><strong>0</strong>following</span></div></div>
+    <section class="profile-head"><div class="profile-top">${avatar("large")}<div class="stats"><span><strong>${account.posts.length}</strong>posts</span><span><strong>${formatCount(account.followers)}</strong>followers</span><span><strong>${formatCount(account.following)}</strong>following</span></div></div>
       <div class="profile-bio"><strong>${esc(account.displayName)}</strong><span>${esc(account.category)}</span><span>${esc(account.bio).replace(/\n/g, "<br>")}</span>${link ? `<a href="${esc(link)}" target="_blank" rel="noopener">${esc(account.link)}</a>` : ""}</div>
       <div class="profile-buttons"><button class="small-button ${viewerFollowing ? "following" : "follow"}" data-action="toggle-follow">${viewerFollowing ? "Following" : "Follow"}</button><button class="small-button" data-action="message">Message</button></div>
     </section>
     <div class="profile-tabs"><button aria-label="Posts">${icons.grid}</button><button aria-label="Mentions">${icons.profile}</button></div>
     ${account.posts.length ? `<div class="profile-grid">${[...account.posts].reverse().map(p => `<button class="grid-post" data-post="${p.id}"><img src="${p.image}" alt="Open post"></button>`).join("")}</div>` : `<div class="empty-grid"><div><h3>No posts yet</h3><p>Create a post to see your future profile come alive.</p></div></div>`}`;
+}
+
+function activeReference() { return comparisonAccounts.find(reference => reference.id === activeReferenceId); }
+
+function referenceProfileTemplate() {
+  const reference = activeReference();
+  if (!reference) { route = "search"; return searchTemplate(); }
+  return `<header class="screen-header"><span class="header-left"><button class="icon-button" data-route="search" aria-label="Back">${icons.back}</button></span><strong>${esc(reference.username)}</strong><span class="header-right">${icons.more}</span></header>
+    <section class="profile-head"><div class="profile-top">${referenceAvatar(reference, "large")}<div class="stats"><span><strong>—</strong>posts</span><span><strong>—</strong>followers</span><span><strong>—</strong>following</span></div></div>
+      <div class="profile-bio"><strong>${esc(reference.username)}</strong><span>Reference account placeholder</span></div>
+      <div class="profile-buttons"><a class="small-button follow reference-link" href="${esc(reference.url)}" target="_blank" rel="noopener">Open Instagram</a><button class="small-button" data-action="reference-message">Message</button></div>
+    </section><div class="profile-tabs"><button aria-label="Posts">${icons.grid}</button><button aria-label="Mentions">${icons.profile}</button></div>
+    <div class="empty-grid"><div><h3>Placeholder profile</h3><p>This account is included for context only. Beforegram does not scrape its content.</p></div></div>`;
+}
+
+function formatCount(value) {
+  const number = Math.max(0, Number(value) || 0);
+  if (number >= 1000000) return `${(number / 1000000).toFixed(number >= 10000000 ? 0 : 1)}M`;
+  if (number >= 1000) return `${(number / 1000).toFixed(number >= 100000 ? 0 : 1)}K`;
+  return String(number);
 }
 
 function circleTemplate() {
@@ -263,6 +343,14 @@ function commentFormTemplate() {
   return `<form class="comment-form" id="comment-form"><input id="comment-input" placeholder="Add a comment…" aria-label="Add a comment"><button type="submit">Post</button></form>`;
 }
 
+function messagesTemplate() {
+  const messages = account.messages || [];
+  return `<section class="messages-view"><header class="screen-header"><span class="header-left"><button class="icon-button" data-route="profile" aria-label="Back">${icons.back}</button></span><div class="message-person">${avatar()}<span><strong>${esc(account.username)}</strong><small>Instagram</small></span></div><span class="header-right"></span></header>
+    <div class="message-thread">${messages.length ? messages.map(message => `<div class="message-bubble ${message.sender === "viewer" ? "from-viewer" : "from-account"}">${esc(message.text)}</div>`).join("") : `<div class="message-empty">${avatar("large")}<strong>${esc(account.displayName)}</strong><span>@${esc(account.username)}</span><p>Start a simulated conversation.</p></div>`}</div>
+    <form class="message-form" id="message-form"><button type="button" class="message-role" data-action="toggle-message-sender" title="Change message sender">${messageSender === "viewer" ? "Audience" : "Account"}</button><input id="message-input" placeholder="Message…" aria-label="Message"><button type="submit">Send</button></form>
+  </section>`;
+}
+
 function dashboardTemplate() {
   return `<aside class="dashboard" aria-label="Account editor"><header class="dashboard-head"><h2>Edit account</h2><button class="icon-button" data-action="toggle-dashboard" aria-label="Close editor">×</button></header>
     <div class="dashboard-avatar">${avatar()}<div><label for="dashboard-avatar">Change profile photo</label><input class="hidden" id="dashboard-avatar" type="file" accept="image/*"></div></div>
@@ -270,7 +358,14 @@ function dashboardTemplate() {
     ${dashboardField("Display name", "displayName", account.displayName)}
     ${dashboardField("Category", "category", account.category)}
     ${dashboardField("Link", "link", account.link)}
+    <div class="dashboard-counts">${dashboardField("Followers", "followers", account.followers, "number")}${dashboardField("Following", "following", account.following, "number")}</div>
     <div class="field"><label for="dash-bio">Bio</label><textarea id="dash-bio" data-account="bio">${esc(account.bio)}</textarea></div>
+    <div class="dashboard-divider"></div>
+    <form id="reference-form"><h3>Reference accounts</h3><p class="dashboard-note">Paste public Instagram profile links. We use the username as a placeholder and do not fetch the account.</p>
+      <div class="field"><label for="reference-links">Instagram links</label><textarea id="reference-links" placeholder="https://instagram.com/accountname"></textarea></div>
+      <button class="secondary setup-submit" type="submit">Add to audience context</button>
+    </form>
+    ${comparisonAccounts.length ? `<div class="reference-list">${comparisonAccounts.map(reference => `<div>${referenceAvatar(reference)}<span><strong>${esc(reference.username)}</strong><small>Placeholder</small></span><button data-remove-reference="${reference.id}" aria-label="Remove ${esc(reference.username)}">×</button></div>`).join("")}</div>` : ""}
     <div class="dashboard-divider"></div>
     <form id="dashboard-post-form"><h3>Add a post</h3>
       <label class="dashboard-post-upload" for="dashboard-post-file">${dashboardPostImage ? `<img src="${dashboardPostImage}" alt="Selected post preview">` : `<span>${icons.create} Choose a photo</span>`}</label>
@@ -283,8 +378,8 @@ function dashboardTemplate() {
   </aside>`;
 }
 
-function dashboardField(label, key, value) {
-  return `<div class="field"><label for="dash-${key}">${label}</label><input id="dash-${key}" data-account="${key}" value="${esc(value)}"></div>`;
+function dashboardField(label, key, value, type = "text") {
+  return `<div class="field"><label for="dash-${key}">${label}</label><input id="dash-${key}" data-account="${key}" type="${type}" ${type === "number" ? 'min="0" step="1"' : ""} value="${esc(value)}"></div>`;
 }
 
 function bindEvents() {
@@ -292,15 +387,39 @@ function bindEvents() {
   document.querySelectorAll("[data-route]").forEach(el => el.addEventListener("click", () => go(el.dataset.route)));
   document.querySelectorAll("[data-post]").forEach(el => el.addEventListener("click", () => { activePostId = el.dataset.post; go("post"); }));
   document.querySelectorAll("[data-comments]").forEach(el => el.addEventListener("click", () => { activePostId = el.dataset.comments; go("comments"); }));
+  bindReferenceButtons();
 
   document.querySelector("#setup-form")?.addEventListener("submit", submitSetup);
   document.querySelector("#comment-form")?.addEventListener("submit", submitComment);
+  document.querySelector("#message-form")?.addEventListener("submit", submitMessage);
+  document.querySelector("#reference-form")?.addEventListener("submit", submitReferences);
   document.querySelector("#dashboard-post-form")?.addEventListener("submit", submitDashboardPost);
   document.querySelector("#dashboard-post-file")?.addEventListener("change", async event => { dashboardPostImage = await fileToDataUrl(event.target.files[0]); render(); });
   document.querySelector("#circle-file")?.addEventListener("change", importCircleScreenshot);
   document.querySelector("#dashboard-avatar")?.addEventListener("change", async event => { account.avatar = await fileToDataUrl(event.target.files[0]); saveAccount(); render(); });
-  document.querySelector("#search-input")?.addEventListener("input", event => { document.querySelector("#search-results").innerHTML = searchResultTemplate(event.target.value); document.querySelector("#search-results [data-route]")?.addEventListener("click", () => go("profile")); });
-  document.querySelectorAll("[data-account]").forEach(input => input.addEventListener("input", event => { account[event.target.dataset.account] = event.target.value; saveAccount(); renderScreenOnly(); }));
+  bindSearchInput();
+  document.querySelectorAll("[data-account]").forEach(input => input.addEventListener("input", event => {
+    account[event.target.dataset.account] = event.target.type === "number" ? Math.max(0, Number(event.target.value) || 0) : event.target.value;
+    saveAccount();
+    renderScreenOnly();
+  }));
+  document.querySelectorAll("[data-remove-reference]").forEach(button => button.addEventListener("click", () => removeReference(button.dataset.removeReference)));
+}
+
+function bindReferenceButtons(root = document) {
+  root.querySelectorAll("[data-reference]").forEach(button => button.addEventListener("click", () => {
+    activeReferenceId = button.dataset.reference;
+    go("reference");
+  }));
+}
+
+function bindSearchInput(root = document) {
+  root.querySelector("#search-input")?.addEventListener("input", event => {
+    const results = root.querySelector("#search-results");
+    results.innerHTML = searchResultTemplate(event.target.value);
+    results.querySelector("[data-route]")?.addEventListener("click", () => go("profile"));
+    bindReferenceButtons(results);
+  });
 }
 
 function handleAction(event) {
@@ -312,7 +431,10 @@ function handleAction(event) {
   if (action === "close-dashboard") { dashboardOpen = false; render(); }
   if (action === "post-menu") editPost();
   if (action === "toggle-follow") { viewerFollowing = !viewerFollowing; render(); }
-  if (action === "message") toast(`Message preview for @${account.username}`);
+  if (action === "message") go("messages");
+  if (action === "reference-message") toast("Reference accounts are placeholders only.");
+  if (action === "toggle-message-sender") { messageSender = messageSender === "viewer" ? "account" : "viewer"; render(); }
+  if (action === "toggle-theme") { theme = theme === "dark" ? "light" : "dark"; localStorage.setItem(THEME_KEY, theme); render(); }
   if (action === "clear-circle") { circleImage = ""; circleTiles = []; circleResult = null; render(); }
 }
 
@@ -327,6 +449,10 @@ function renderScreenOnly() {
   document.querySelectorAll("#screen [data-route]").forEach(el => el.addEventListener("click", () => go(el.dataset.route)));
   document.querySelectorAll("#screen [data-post]").forEach(el => el.addEventListener("click", () => { activePostId = el.dataset.post; go("post"); }));
   document.querySelectorAll("#screen [data-comments]").forEach(el => el.addEventListener("click", () => { activePostId = el.dataset.comments; go("comments"); }));
+  document.querySelectorAll("#screen [data-action]").forEach(el => el.addEventListener("click", handleAction));
+  document.querySelector("#screen #message-form")?.addEventListener("submit", submitMessage);
+  bindReferenceButtons(screen);
+  bindSearchInput(screen);
 }
 
 async function submitSetup(event) {
@@ -375,6 +501,54 @@ function submitComment(event) {
   post.comments = post.comments || [];
   post.comments.push({ id: crypto.randomUUID(), text });
   saveAccount();
+  render();
+}
+
+function submitMessage(event) {
+  event.preventDefault();
+  const input = document.querySelector("#message-input");
+  const text = input.value.trim();
+  if (!text) return;
+  account.messages = account.messages || [];
+  account.messages.push({ id: crypto.randomUUID(), text, sender: messageSender });
+  saveAccount();
+  render();
+  document.querySelector(".message-thread")?.scrollTo({ top: 99999 });
+}
+
+function submitReferences(event) {
+  event.preventDefault();
+  const input = document.querySelector("#reference-links");
+  const entries = input.value.split(/[\n\s]+/).map(parseInstagramReference).filter(Boolean);
+  for (const entry of entries) {
+    if (!comparisonAccounts.some(reference => reference.username.toLowerCase() === entry.username.toLowerCase())) comparisonAccounts.push(entry);
+  }
+  saveComparisonAccounts();
+  render();
+  toast(`${entries.length} reference account${entries.length === 1 ? "" : "s"} added`);
+}
+
+function parseInstagramReference(value) {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  let username = cleanUsername(trimmed);
+  let url = `https://www.instagram.com/${username}/`;
+  try {
+    const candidate = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+    const parsed = new URL(candidate);
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    if (parsed.hostname.includes("instagram.com") && parts[0] && !["p", "reel", "stories", "explore"].includes(parts[0])) {
+      username = cleanUsername(parts[0]);
+      url = `https://www.instagram.com/${username}/`;
+    }
+  } catch { /* Raw usernames are accepted as a convenience. */ }
+  if (!/^[a-z0-9._]{1,30}$/i.test(username)) return null;
+  return { id: crypto.randomUUID(), username, url };
+}
+
+function removeReference(id) {
+  comparisonAccounts = comparisonAccounts.filter(reference => reference.id !== id);
+  saveComparisonAccounts();
   render();
 }
 
